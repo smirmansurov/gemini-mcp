@@ -2,9 +2,7 @@
 """
 Remote MCP-сервер генерации изображений через Gemini (gemini-2.5-flash-image / «Nano Banana»).
 Транспорт: Streamable HTTP (совместим с кастомными коннекторами Claude).
-Деплоится на Railway; ключ берётся из переменной окружения GEMINI_API_KEY.
-
-Эндпоинт MCP:  https://<ваш-домен>/mcp
+Эндпоинт MCP:  https://<домен>/mcp
 """
 import os
 import base64
@@ -14,7 +12,16 @@ from google import genai
 
 MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
 
-mcp = FastMCP("gemini-image", stateless_http=True)
+# ВАЖНО: отключаем DNS-rebinding-защиту, иначе MCP отбивает запросы
+# с внешнего домена Railway («Invalid Host header» → 421 Misdirected Request).
+try:
+    from mcp.server.transport_security import TransportSecuritySettings
+    _sec = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    mcp = FastMCP("gemini-image", stateless_http=True, transport_security=_sec)
+except Exception:
+    # запасной вариант для старых версий SDK
+    mcp = FastMCP("gemini-image", stateless_http=True)
+
 _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
@@ -40,32 +47,17 @@ def generate_image(prompt: str, aspect_ratio: str = "1:1") -> str:
             data = inl.data
             if isinstance(data, (bytes, bytearray)):
                 return base64.b64encode(bytes(data)).decode()
-            return data  # уже base64-строка
+            return data
     try:
         return "ERROR: " + (resp.candidates[0].content.parts[0].text or "no image")
     except Exception:
         return "ERROR: no image returned"
 
 
-# ASGI-приложение для uvicorn (Railway: uvicorn server:app)
+# ASGI-приложение для uvicorn
 app = mcp.streamable_http_app()
-
-# Необязательная защита заголовком X-API-Token (если задан MCP_TOKEN)
-_TOKEN = os.environ.get("MCP_TOKEN")
-if _TOKEN:
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import JSONResponse
-
-    class _Auth(BaseHTTPMiddleware):
-        async def dispatch(self, request, call_next):
-            if request.headers.get("x-api-token") != _TOKEN:
-                return JSONResponse({"error": "unauthorized"}, status_code=401)
-            return await call_next(request)
-
-    app.add_middleware(_Auth)
 
 
 if __name__ == "__main__":
-    # локальный запуск: python server.py  → http://127.0.0.1:8000/mcp
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
