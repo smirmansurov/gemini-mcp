@@ -11,6 +11,11 @@ import re
 import base64
 import datetime
 import pathlib
+import io
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
 from mcp.server.fastmcp import FastMCP
 from google import genai
@@ -50,6 +55,30 @@ def _url(name: str) -> str:
     return f"{BASE}/img/{name}" if BASE else f"/img/{name}"
 
 
+def _strip_magenta(data: bytes) -> bytes:
+    """Если фон картинки — хромакей-маджента, делаем его прозрачным (серверно, без CORS)."""
+    if Image is None:
+        return data
+    try:
+        im = Image.open(io.BytesIO(data)).convert("RGBA")
+        w, h = im.size
+        px = im.load()
+        def ismag(c):
+            r, g, b = c[0], c[1], c[2]
+            return r > 150 and b > 120 and g < 110
+        corners = [px[0, 0], px[w-1, 0], px[0, h-1], px[w-1, h-1]]
+        if not any(ismag(c) for c in corners):
+            return data  # не маджента (например, сцены на мятном фоне) — не трогаем
+        out = []
+        for (r, g, b, a) in im.getdata():
+            out.append((r, g, b, 0) if (r > 150 and b > 120 and g < 110) else (r, g, b, a))
+        im.putdata(out)
+        buf = io.BytesIO(); im.save(buf, "PNG")
+        return buf.getvalue()
+    except Exception:
+        return data
+
+
 def _save(resp, filename: str) -> str:
     for part in resp.candidates[0].content.parts:
         inl = getattr(part, "inline_data", None)
@@ -57,6 +86,7 @@ def _save(resp, filename: str) -> str:
             data = inl.data
             if isinstance(data, str):
                 data = base64.b64decode(data)
+            data = _strip_magenta(data)   # авто-вырезка хромакей-фона у спрайтов
             name = _name(filename)
             (GEN_DIR / name).write_bytes(bytes(data))
             return f"OK image_url={_url(name)} (bytes={len(data)})"
