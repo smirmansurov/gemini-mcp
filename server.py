@@ -111,6 +111,13 @@ def list_images() -> str:
 app = mcp.streamable_http_app()
 app.router.routes.append(Mount("/img", app=StaticFiles(directory=str(GEN_DIR))))
 
+# CORS — чтобы игра в браузере могла читать пиксели картинок (обрезка фона у спрайтов)
+try:
+    from starlette.middleware.cors import CORSMiddleware
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+except Exception:
+    pass
+
 
 if __name__ == "__main__":
     import uvicorn
