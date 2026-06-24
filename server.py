@@ -132,6 +132,33 @@ def generate_with_logo(prompt: str, filename: str = "", aspect_ratio: str = "1:1
 
 
 @mcp.tool()
+def animate_frame(prompt: str, ref_filename: str, filename: str = "", aspect_ratio: str = "4:3") -> str:
+    """Сгенерировать СЛЕДУЮЩИЙ КАДР анимации на основе уже существующей картинки.
+
+    ref_filename — имя файла из /img (например 'scene_idea.png'). Возвращает ССЫЛКУ.
+    Меняем ТОЛЬКО то, что описано в prompt (например «лампочка загорелась», «рука поднята вверх»),
+    сохраняя того же персонажа, позу, цвета, фон и кадрирование — чтобы два изображения
+    проигрывались как соседние кадры анимации без рывка.
+    """
+    ref = GEN_DIR / _name(ref_filename)
+    if not ref.exists():
+        return f"ERROR: ref '{ref_filename}' не найден в /img"
+    ref_bytes = ref.read_bytes()
+    full = (prompt +
+            "\n\nUse the attached image as the EXACT base frame. "
+            "Keep the SAME character(s), identical proportions and pose, identical colors, "
+            "identical background, composition and framing, identical art style and lighting. "
+            "Change ONLY what is described above, so the two images can be played as two "
+            "consecutive animation frames without any visible jump or morphing. "
+            f"Aspect ratio {aspect_ratio}.")
+    resp = _client.models.generate_content(
+        model=MODEL,
+        contents=[full, types.Part.from_bytes(data=ref_bytes, mime_type="image/png")],
+    )
+    return _save(resp, filename)
+
+
+@mcp.tool()
 def list_images() -> str:
     """Список ссылок на уже сгенерированные картинки."""
     names = sorted(p.name for p in GEN_DIR.glob("*.png"))
